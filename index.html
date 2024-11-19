@@ -3,13 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GPS Navigation Game</title>
+    <title>Mobile-Friendly AR Navigation</title>
+    <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
+    <script src="https://cdn.rawgit.com/jeromeetienne/AR.js/master/aframe/build/aframe-ar.js"></script>
     <style>
-        body { 
-            margin: 0; 
-            font-family: Arial, sans-serif;
-            overflow: hidden;
-        }
+        body { margin: 0; font-family: Arial, sans-serif; }
+        .a-enter-vr { display: none; }
         #game-ui {
             position: fixed;
             top: 0;
@@ -45,38 +44,6 @@
             display: none;
             z-index: 100;
         }
-        #target-indicator {
-            position: fixed;
-            width: 40px;
-            height: 40px;
-            background-color: red;
-            border-radius: 50%;
-            transform: translate(-50%, -50%);
-            display: none;
-            pointer-events: none;
-            z-index: 90;
-        }
-        #compass {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            width: 100px;
-            height: 100px;
-            border-radius: 50%;
-            background-color: rgba(255, 255, 255, 0.8);
-            border: 2px solid #333;
-            z-index: 100;
-        }
-        #compass-arrow {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 4px;
-            height: 40px;
-            background-color: red;
-            transform-origin: bottom center;
-            transform: translate(-50%, -100%) rotate(0deg);
-        }
     </style>
 </head>
 <body>
@@ -86,26 +53,51 @@
     </div>
 
     <div id="acknowledgment">You've reached your destination!</div>
-    <div id="target-indicator"></div>
-    <div id="compass">
-        <div id="compass-arrow"></div>
-    </div>
+
+    <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;">
+        <a-assets>
+            <a-asset-item id="target-model" src="AnimatedRalphie.glb"></a-asset-item>
+        </a-assets>
+
+        <!-- Navigation arrow template -->
+        <a-entity id="arrow-template" visible="false">
+            <a-triangle 
+                vertex-a="0 0 -1" 
+                vertex-b="-0.5 0 0" 
+                vertex-c="0.5 0 0"
+                material="color: #FFD700; transparent: true; opacity: 0.8"
+            ></a-triangle>
+        </a-entity>
+
+        <!-- Target model with GPS location -->
+        <a-entity 
+            id="target-model-entity"
+            gltf-model="#target-model"
+            scale="1 1 1"
+            rotation="0 0 0"
+            animation="property: rotation; to: 0 360 0; dur: 5000; easing: linear; loop: true"
+            gps-entity-place="latitude: 0; longitude: 0;">
+        </a-entity>
+
+        <a-camera gps-camera rotation-reader></a-camera>
+    </a-scene>
 
     <script>
         let gameStarted = false;
         let congratsShown = false;
+        const ARROW_SPACING = 2;
+        const MAX_ARROWS = 5;
+        let arrows = [];
         let targetPosition = null;
-        let currentHeading = 0;
 
-        // Handle device orientation for compass
-        window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-        
-        function handleOrientation(event) {
-            if (!event.alpha) return;
-            
-            currentHeading = event.alpha;
-            if (targetPosition) {
-                updateTargetIndicator();
+        function createArrows() {
+            const arrowTemplate = document.querySelector('#arrow-template');
+            for (let i = 0; i < MAX_ARROWS; i++) {
+                const arrow = arrowTemplate.cloneNode(true);
+                arrow.id = `arrow-${i}`;
+                arrow.setAttribute('visible', 'true');
+                document.querySelector('a-scene').appendChild(arrow);
+                arrows.push(arrow);
             }
         }
 
@@ -132,6 +124,7 @@
                     Math.cos(distance/R) - Math.sin(lat1) * Math.sin(targetLat)
                 );
             
+            // Convert back to degrees
             return {
                 latitude: targetLat * 180/Math.PI,
                 longitude: targetLng * 180/Math.PI
@@ -143,7 +136,6 @@
                 gameStarted = true;
                 document.getElementById('start-button').style.display = 'none';
                 document.getElementById('status-message').textContent = "Setting up target location...";
-                document.getElementById('target-indicator').style.display = 'block';
 
                 if (navigator.geolocation) {
                     navigator.geolocation.getCurrentPosition(position => {
@@ -151,6 +143,15 @@
                             position.coords.latitude,
                             position.coords.longitude
                         );
+                        
+                        // Set the target model's GPS position
+                        const targetModel = document.getElementById('target-model-entity');
+                        targetModel.setAttribute('gps-entity-place', {
+                            latitude: targetPosition.latitude,
+                            longitude: targetPosition.longitude
+                        });
+                        
+                        createArrows();
                         
                         // Start position tracking
                         navigator.geolocation.watchPosition(updateGameState, showError, {
@@ -160,7 +161,7 @@
                         });
                         
                         document.getElementById('status-message').textContent = 
-                            "Target placed! Follow the indicator to find it.";
+                            "Target placed! Follow the arrows to find it.";
                     }, showError, {
                         enableHighAccuracy: true,
                         timeout: 10000,
@@ -193,37 +194,18 @@
             document.getElementById('status-message').textContent = 
                 `Distance: ${Math.floor(currentDistance)}m | Direction: ${Math.floor(bearing)}°`;
 
-            // Update target indicator
-            updateTargetIndicator(bearing);
+            // Update arrow positions
+            updateArrows(bearing, currentDistance);
 
             // Check if player reached target
             if (currentDistance < 2 && !congratsShown) {
                 document.getElementById('acknowledgment').style.display = 'block';
-                document.getElementById('target-indicator').style.display = 'none';
                 congratsShown = true;
+                arrows.forEach(arrow => arrow.setAttribute('visible', 'false'));
             }
         }
 
-        function updateTargetIndicator(bearing) {
-            const indicator = document.getElementById('target-indicator');
-            const compassArrow = document.getElementById('compass-arrow');
-            
-            // Adjust bearing based on device orientation
-            const adjustedBearing = (bearing - currentHeading + 360) % 360;
-            
-            // Update compass
-            compassArrow.style.transform = `translate(-50%, -100%) rotate(${adjustedBearing}deg)`;
-
-            // Calculate indicator position
-            const radius = Math.min(window.innerWidth, window.innerHeight) * 0.4;
-            const angle = adjustedBearing * (Math.PI / 180);
-            const x = window.innerWidth/2 + radius * Math.sin(angle);
-            const y = window.innerHeight/2 - radius * Math.cos(angle);
-            
-            indicator.style.left = `${x}px`;
-            indicator.style.top = `${y}px`;
-        }
-
+        // Rest of the utility functions remain the same
         function calculateDistance(lat1, lon1, lat2, lon2) {
             const R = 6371e3;
             const φ1 = lat1 * Math.PI/180;
@@ -251,6 +233,21 @@
             const θ = Math.atan2(y, x);
 
             return (θ * 180 / Math.PI + 360) % 360;
+        }
+
+        function updateArrows(bearing, distance) {
+            const numArrows = Math.min(Math.floor(distance / ARROW_SPACING), MAX_ARROWS);
+            
+            arrows.forEach((arrow, index) => {
+                if (index < numArrows) {
+                    const z = -ARROW_SPACING * (index + 1);
+                    arrow.setAttribute('position', `0 0.1 ${z}`);
+                    arrow.setAttribute('rotation', `0 ${bearing} 0`);
+                    arrow.setAttribute('visible', 'true');
+                } else {
+                    arrow.setAttribute('visible', 'false');
+                }
+            });
         }
 
         function showError(error) {
