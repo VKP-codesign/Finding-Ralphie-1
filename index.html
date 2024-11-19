@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mobile-Friendly AR Game</title>
+    <title>Mobile-Friendly AR Navigation</title>
     <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
     <script src="https://cdn.rawgit.com/jeromeetienne/AR.js/master/aframe/build/aframe-ar.js"></script>
     <style>
@@ -12,26 +12,18 @@
             font-family: Arial, sans-serif;
             background-color: #f8f8f8;
         }
-        #ar-container {
-            width: 100%;
-            position: relative;
-            padding-top: 56.25%;
-            overflow: hidden;
-            border-top: 5px solid #333;
-            border-bottom: 5px solid #333;
-        }
-        a-scene {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+        .a-enter-vr {
+            display: none;
         }
         #game-ui {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
             padding: 20px;
             text-align: center;
-            background-color: #f8f8f8;
+            background-color: rgba(248, 248, 248, 0.8);
+            z-index: 100;
         }
         #start-button {
             background-color: #ffcc00;
@@ -46,7 +38,7 @@
             margin-top: 10px;
         }
         #acknowledgment {
-            position: absolute;
+            position: fixed;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
@@ -58,70 +50,67 @@
             display: none;
             z-index: 100;
         }
-        .a-enter-vr {
-            display: none;
-        }
-
-        /* Arrow Styling */
-        #arrow {
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%) rotate(0deg); /* Make sure it starts without rotation */
-            width: 60px;  /* Increased size */
-            height: 60px; /* Increased size */
-            z-index: 100;
-            visibility: visible; /* Ensure it's visible */
-        }
-        #arrow img {
-            width: 100%;
-            height: 100%; /* Ensure the image scales to the div's size */
-        }
     </style>
 </head>
 <body>
     <div id="game-ui">
-        <button id="start-button" onclick="startGame()">Start Game</button>
-        <p id="status-message">Press Start to begin.</p>
+        <button id="start-button" onclick="startGame()">Start Navigation</button>
+        <p id="status-message">Press Start to begin navigation.</p>
     </div>
 
-    <div id="acknowledgment">Congratulations! You've found the target!</div>
+    <div id="acknowledgment">You've reached your destination!</div>
 
-    <!-- AR Container -->
-    <div id="ar-container">
-        <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;">
-            <!-- Asset Management System -->
-            <a-assets>
-                <!-- Replace the URL below with your GLB model URL -->
-                <a-asset-item id="target-model" src="AnimatedRalphie.glb"></a-asset-item>
-            </a-assets>
+    <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;">
+        <a-assets>
+            <a-asset-item id="target-model" src="AnimatedRalphie.glb"></a-asset-item>
+        </a-assets>
 
-            <!-- Fixed Target model entity -->
-            <a-entity 
-                id="target-model-entity"
-                gltf-model="#target-model"
-                position="0 0 -5"  <!-- Keep target at a fixed position -->
-                scale="1 1 1"
-                rotation="0 0 0"
-                animation="property: rotation; to: 0 360 0; dur: 5000; easing: linear; loop: true">
-            </a-entity>
+        <!-- Navigation arrow template -->
+        <a-entity id="arrow-template" visible="false">
+            <a-triangle 
+                vertex-a="0 0 -1" 
+                vertex-b="-0.5 0 0" 
+                vertex-c="0.5 0 0"
+                material="color: #FFD700; transparent: true; opacity: 0.8"
+            ></a-triangle>
+        </a-entity>
 
-            <a-entity camera></a-entity>
-        </a-scene>
-    </div>
+        <!-- Target model -->
+        <a-entity 
+            id="target-model-entity"
+            gltf-model="#target-model"
+            position="0 0 -5"
+            scale="1 1 1"
+            rotation="0 0 0"
+            animation="property: rotation; to: 0 360 0; dur: 5000; easing: linear; loop: true">
+        </a-entity>
 
-    <!-- Directional Arrow -->
-    <div id="arrow">
-        <img src="arrow.jpg" alt="Arrow">
-    </div>
+        <a-entity camera></a-entity>
+    </a-scene>
 
     <script>
         let gameStarted = false;
         let congratsShown = false;
+        const ARROW_SPACING = 2; // Space between arrows in meters
+        const MAX_ARROWS = 5; // Maximum number of arrows to show at once
+        let arrows = [];
+
+        // Create pool of arrows
+        function createArrows() {
+            const arrowTemplate = document.querySelector('#arrow-template');
+            for (let i = 0; i < MAX_ARROWS; i++) {
+                const arrow = arrowTemplate.cloneNode(true);
+                arrow.id = `arrow-${i}`;
+                arrow.setAttribute('visible', 'true');
+                document.querySelector('a-scene').appendChild(arrow);
+                arrows.push(arrow);
+            }
+        }
 
         function startGame() {
             document.getElementById('start-button').style.display = 'none';
-            document.getElementById('status-message').textContent = "Checking your location...";
+            document.getElementById('status-message').textContent = "Following navigation path...";
+            createArrows();
 
             if (navigator.geolocation) {
                 navigator.geolocation.watchPosition(showPosition, showError);
@@ -130,27 +119,43 @@
             }
         }
 
+        function updateArrows(bearing, distance) {
+            const numArrows = Math.min(Math.floor(distance / ARROW_SPACING), MAX_ARROWS);
+            
+            arrows.forEach((arrow, index) => {
+                if (index < numArrows) {
+                    // Calculate position for each arrow
+                    const z = -ARROW_SPACING * (index + 1);
+                    arrow.setAttribute('position', `0 0.1 ${z}`);
+                    arrow.setAttribute('rotation', `0 ${bearing} 0`);
+                    arrow.setAttribute('visible', 'true');
+                } else {
+                    arrow.setAttribute('visible', 'false');
+                }
+            });
+        }
+
         function showPosition(position) {
             const playerLat = position.coords.latitude;
             const playerLng = position.coords.longitude;
-            const distance = 10; // Target is 10 meters away
-
-            const fixedTargetLat = 40.008; // Set the fixed latitude of your target (example: 40.008)
-            const fixedTargetLng = -105.264; // Set the fixed longitude of your target (example: -105.264)
+            
+            const fixedTargetLat = 40.008;
+            const fixedTargetLng = -105.264;
 
             const currentDistance = calculateDistance(playerLat, playerLng, fixedTargetLat, fixedTargetLng);
             const bearing = calculateBearing(playerLat, playerLng, fixedTargetLat, fixedTargetLng);
 
-            // Update status message with distance and bearing
-            document.getElementById('status-message').textContent = `Target is ${Math.floor(currentDistance)} meters away, direction: ${Math.floor(bearing)}°`;
+            // Update the navigation arrows
+            updateArrows(bearing, currentDistance);
 
-            // Rotate the arrow based on bearing to the target
-            document.getElementById('arrow').style.transform = `translateX(-50%) rotate(${bearing}deg)`;
+            // Update status message
+            document.getElementById('status-message').textContent = 
+                `Distance: ${Math.floor(currentDistance)}m | Direction: ${Math.floor(bearing)}°`;
 
-            // Show acknowledgment when the target is found
-            if (currentDistance < 1 && !congratsShown) {
+            if (currentDistance < 2 && !congratsShown) {
                 document.getElementById('acknowledgment').style.display = 'block';
                 congratsShown = true;
+                arrows.forEach(arrow => arrow.setAttribute('visible', 'false'));
             }
         }
 
@@ -172,16 +177,16 @@
         }
 
         function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371e3; // Radius of Earth in meters
-            const φ1 = lat1 * Math.PI / 180;
-            const φ2 = lat2 * Math.PI / 180;
-            const Δφ = (lat2 - lat1) * Math.PI / 180;
-            const Δλ = (lon2 - lon1) * Math.PI / 180;
+            const R = 6371e3;
+            const φ1 = lat1 * Math.PI/180;
+            const φ2 = lat2 * Math.PI/180;
+            const Δφ = (lat2-lat1) * Math.PI/180;
+            const Δλ = (lon2-lon1) * Math.PI/180;
 
-            const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) + 
-                      Math.cos(φ1) * Math.cos(φ2) * 
-                      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 
             return R * c;
         }
