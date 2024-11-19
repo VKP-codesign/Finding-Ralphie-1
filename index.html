@@ -12,9 +12,6 @@
             font-family: Arial, sans-serif;
             overflow: hidden;
         }
-        .a-enter-vr {
-            display: none;
-        }
         #game-ui {
             position: fixed;
             top: 0;
@@ -61,73 +58,148 @@
             text-align: center;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
-        #debug-info {
-            position: fixed;
-            bottom: 20px;
-            left: 20px;
-            background-color: rgba(0, 0, 0, 0.7);
+        #retry-button {
+            background-color: #f44336;
             color: white;
-            padding: 10px;
-            border-radius: 5px;
-            font-size: 14px;
+            padding: 12px 24px;
+            font-size: 18px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px;
             display: none;
-            z-index: 100;
         }
     </style>
 </head>
 <body>
     <div id="game-ui">
         <button id="start-button" onclick="startGame()">Start Navigation</button>
+        <button id="retry-button" onclick="retryGeolocation()">Retry</button>
         <p id="status-message">Press Start to begin navigation.</p>
     </div>
 
     <div id="acknowledgment">You've reached your destination!</div>
-    <div id="debug-info"></div>
-
-    <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false; sourceWidth:1280; sourceHeight:960; displayWidth: 1280; displayHeight: 960;">
+    
+    <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;">
         <a-assets>
             <a-asset-item id="target-model" src="AnimatedRalphie.glb"></a-asset-item>
         </a-assets>
 
-        <!-- Navigation arrow template -->
+        <a-entity id="target-model-entity" gltf-model="#target-model" scale="1 1 1" rotation="0 0 0"
+                  gps-entity-place="latitude: 0; longitude: 0;">
+        </a-entity>
+
         <a-entity id="arrow-template" visible="false">
-            <a-triangle 
-                vertex-a="0 0.5 -1" 
-                vertex-b="-0.5 0.5 0" 
-                vertex-c="0.5 0.5 0"
-                material="color: #FFD700; transparent: true; opacity: 0.8"
-            ></a-triangle>
+            <a-triangle vertex-a="0 0.5 -1" vertex-b="-0.5 0.5 0" vertex-c="0.5 0.5 0"
+                        material="color: #FFD700; transparent: true; opacity: 0.8"></a-triangle>
         </a-entity>
 
-        <!-- Target model -->
-        <a-entity 
-            id="target-model-entity"
-            gltf-model="#target-model"
-            scale="1 1 1"
-            rotation="0 0 0"
-            animation="property: rotation; to: 0 360 0; dur: 5000; easing: linear; loop: true"
-            gps-entity-place="latitude: 0; longitude: 0;">
-        </a-entity>
-
-        <!-- Camera -->
         <a-camera gps-camera rotation-reader></a-camera>
     </a-scene>
 
     <script>
         let gameStarted = false;
         let congratsShown = false;
-        const ARROW_SPACING = 2; // Space between arrows in meters
-        const MAX_ARROWS = 5; // Maximum number of arrows to show
+        const ARROW_SPACING = 2;
+        const MAX_ARROWS = 5;
         let arrows = [];
         let targetPosition = null;
         let startTime = null;
         let lastUpdateTime = 0;
-        const UPDATE_INTERVAL = 1000; // Update interval in milliseconds
+        const UPDATE_INTERVAL = 1000;
+        const LOCATION_OPTIONS = {
+            enableHighAccuracy: true,
+            timeout: 20000,
+            maximumAge: 0
+        };
+        let locationWatchId = null;
 
-        // Initialize debug mode based on URL parameter
-        const debugMode = new URLSearchParams(window.location.search).has('debug');
-        if (debugMode) {
-            document.getElementById('debug-info').style.display = 'block';
+        async function checkLocationPermission() {
+            try {
+                const result = await navigator.permissions.query({ name: 'geolocation' });
+                return result.state;
+            } catch (error) {
+                return new Promise((resolve) => {
+                    navigator.geolocation.getCurrentPosition(
+                        () => resolve('granted'),
+                        () => resolve('denied'),
+                        { timeout: 5000 }
+                    );
+                });
+            }
+        }
+
+        function retryGeolocation() {
+            document.getElementById('retry-button').style.display = 'none';
+            document.getElementById('status-message').textContent = "Retrying location setup...";
+            startGame();
+        }
+
+        async function startGame() {
+            if (gameStarted) return;
+
+            document.getElementById('start-button').style.display = 'none';
+            document.getElementById('status-message').textContent = "Checking location permissions...";
+
+            const permissionStatus = await checkLocationPermission();
+
+            if (permissionStatus === 'denied') {
+                showError({ code: 1, message: 'Location permission denied' });
+                return;
+            }
+
+            gameStarted = true;
+            startTime = Date.now();
+            document.getElementById('status-message').textContent = "Setting up target location...";
+
+            if (locationWatchId) {
+                navigator.geolocation.clearWatch(locationWatchId);
+            }
+
+            try {
+                const position = await new Promise((resolve, reject) => {
+                    navigator.geolocation.getCurrentPosition(resolve, reject, LOCATION_OPTIONS);
+                });
+
+                targetPosition = setRandomTargetPosition(position.coords.latitude, position.coords.longitude);
+
+                const targetModel = document.getElementById('target-model-entity');
+                targetModel.setAttribute('gps-entity-place', {
+                    latitude: targetPosition.latitude,
+                    longitude: targetPosition.longitude
+                });
+
+                createArrows();
+
+                locationWatchId = navigator.geolocation.watchPosition(updateGameState, showError, LOCATION_OPTIONS);
+
+                document.getElementById('status-message').textContent =
+                    `Target placed ${Math.round(targetPosition.distance)}m away at ${Math.round(targetPosition.angle)}°! Follow the arrows to find it.`;
+
+            } catch (error) {
+                showError(error);
+                gameStarted = false;
+            }
+        }
+
+        function setRandomTargetPosition(latitude, longitude) {
+            const randomAngle = Math.random() * 2 * Math.PI;
+            const distance = 5 + (Math.random() * 5);
+            const earthRadius = 6371000;
+            const angularDistance = distance / earthRadius;
+
+            const lat1 = latitude * (Math.PI / 180);
+            const lon1 = longitude * (Math.PI / 180);
+
+            const lat2 = Math.asin(Math.sin(lat1) * Math.cos(angularDistance) + Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(randomAngle));
+            const lon2 = lon1 + Math.atan2(Math.sin(randomAngle) * Math.sin(angularDistance) * Math.cos(lat1), Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2));
+
+            return {
+                latitude: lat2 * (180 / Math.PI),
+                longitude: lon2 * (180 / Math.PI),
+                distance: distance,
+                angle: randomAngle * (180 / Math.PI)
+            };
         }
 
         function createArrows() {
@@ -141,102 +213,6 @@
             }
         }
 
-        function setRandomTargetPosition(latitude, longitude) {
-            // Random angle in radians (0 to 2π)
-            const randomAngle = Math.random() * 2 * Math.PI;
-            
-            // Random distance between 5 and 10 meters
-            const distance = 5 + (Math.random() * 5);
-            
-            // Convert distance to angular distance on Earth's surface
-            const earthRadius = 6371000; // Earth's radius in meters
-            const angularDistance = distance / earthRadius;
-
-            // Convert latitude and longitude to radians
-            const lat1 = latitude * (Math.PI / 180);
-            const lon1 = longitude * (Math.PI / 180);
-
-            // Calculate new latitude
-            const lat2 = Math.asin(
-                Math.sin(lat1) * Math.cos(angularDistance) +
-                Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(randomAngle)
-            );
-
-            // Calculate new longitude
-            const lon2 = lon1 + Math.atan2(
-                Math.sin(randomAngle) * Math.sin(angularDistance) * Math.cos(lat1),
-                Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2)
-            );
-
-            // Convert back to degrees
-            return {
-                latitude: lat2 * (180 / Math.PI),
-                longitude: lon2 * (180 / Math.PI),
-                distance: distance,
-                angle: randomAngle * (180 / Math.PI)
-            };
-        }
-
-        function startGame() {
-            if (!gameStarted) {
-                gameStarted = true;
-                startTime = Date.now();
-                document.getElementById('start-button').style.display = 'none';
-                document.getElementById('status-message').textContent = "Setting up target location...";
-
-                if (navigator.geolocation) {
-                    navigator.geolocation.getCurrentPosition(
-                        position => {
-                            targetPosition = setRandomTargetPosition(
-                                position.coords.latitude,
-                                position.coords.longitude
-                            );
-
-                            const targetModel = document.getElementById('target-model-entity');
-                            targetModel.setAttribute('gps-entity-place', {
-                                latitude: targetPosition.latitude,
-                                longitude: targetPosition.longitude
-                            });
-
-                            if (debugMode) {
-                                console.log('Target placed:', {
-                                    distance: targetPosition.distance.toFixed(2) + 'm',
-                                    angle: targetPosition.angle.toFixed(2) + '°',
-                                    coordinates: {
-                                        lat: targetPosition.latitude,
-                                        lng: targetPosition.longitude
-                                    }
-                                });
-                            }
-
-                            createArrows();
-
-                            navigator.geolocation.watchPosition(
-                                updateGameState,
-                                showError,
-                                {
-                                    enableHighAccuracy: true,
-                                    maximumAge: 1000,
-                                    timeout: 20000
-                                }
-                            );
-
-                            document.getElementById('status-message').textContent = 
-                                `Target placed ${Math.round(targetPosition.distance)}m away at ${Math.round(targetPosition.angle)}°! Follow the arrows to find it.`;
-                        },
-                        showError,
-                        {
-                            enableHighAccuracy: true,
-                            timeout: 10000,
-                            maximumAge: 0
-                        }
-                    );
-                } else {
-                    alert("Geolocation is not supported by this browser.");
-                }
-            }
-        }
-
         function updateGameState(position) {
             if (!targetPosition || !gameStarted) return;
 
@@ -244,108 +220,64 @@
             if (currentTime - lastUpdateTime < UPDATE_INTERVAL) return;
             lastUpdateTime = currentTime;
 
-            const currentDistance = calculateDistance(
-                position.coords.latitude,
-                position.coords.longitude,
-                targetPosition.latitude,
-                targetPosition.longitude
-            );
-            
-            const bearing = calculateBearing(
-                position.coords.latitude,
-                position.coords.longitude,
-                targetPosition.latitude,
-                targetPosition.longitude
-            );
+            const currentDistance = calculateDistance(position.coords.latitude, position.coords.longitude, targetPosition.latitude, targetPosition.longitude);
+            const bearing = calculateBearing(position.coords.latitude, position.coords.longitude, targetPosition.latitude, targetPosition.longitude);
 
-            // Update UI
-            document.getElementById('status-message').textContent = 
-                `Distance: ${currentDistance.toFixed(1)}m | Direction: ${Math.round(bearing)}° | ` +
-                `Initial Distance: ${targetPosition.distance.toFixed(1)}m`;
-
-            if (debugMode) {
-                document.getElementById('debug-info').textContent = 
-                    `Lat: ${position.coords.latitude.toFixed(6)}\n` +
-                    `Lng: ${position.coords.longitude.toFixed(6)}\n` +
-                    `Accuracy: ${position.coords.accuracy.toFixed(1)}m\n` +
-                    `Target: ${currentDistance.toFixed(1)}m @ ${bearing.toFixed(1)}°`;
-            }
+            document.getElementById('status-message').textContent =
+                `Distance: ${currentDistance.toFixed(1)}m | Direction: ${Math.round(bearing)}° | Initial Distance: ${targetPosition.distance.toFixed(1)}m`;
 
             updateArrows(bearing, currentDistance);
 
             if (currentDistance < 2 && !congratsShown) {
                 const timeElapsed = Math.floor((Date.now() - startTime) / 1000);
                 document.getElementById('acknowledgment').style.display = 'block';
-                document.getElementById('acknowledgment').innerHTML = 
-                    `Congratulations! You've found the target!<br>` +
-                    `Time: ${Math.floor(timeElapsed / 60)}m ${timeElapsed % 60}s<br>` +
-                    `Final distance: ${currentDistance.toFixed(1)}m`;
+                document.getElementById('acknowledgment').innerHTML =
+                    `Congratulations! You've found the target!<br>Time: ${Math.floor(timeElapsed / 60)}m ${timeElapsed % 60}s.`;
                 congratsShown = true;
-                arrows.forEach(arrow => arrow.setAttribute('visible', 'false'));
             }
-        }
-
-        function updateArrows(bearing, distance) {
-            const numArrows = Math.min(Math.floor(distance / ARROW_SPACING), MAX_ARROWS);
-            
-            arrows.forEach((arrow, index) => {
-                if (index < numArrows) {
-                    const z = -ARROW_SPACING * (index + 1);
-                    arrow.setAttribute('position', `0 0.5 ${z}`);
-                    arrow.setAttribute('rotation', `0 ${bearing} 0`);
-                    arrow.setAttribute('visible', 'true');
-                } else {
-                    arrow.setAttribute('visible', 'false');
-                }
-            });
         }
 
         function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371e3;
-            const φ1 = lat1 * Math.PI/180;
-            const φ2 = lat2 * Math.PI/180;
-            const Δφ = (lat2-lat1) * Math.PI/180;
-            const Δλ = (lon2-lon1) * Math.PI/180;
-
-            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                      Math.cos(φ1) * Math.cos(φ2) *
-                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-
-            return R * c;
+            const earthRadius = 6371000; 
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return earthRadius * c;
         }
 
         function calculateBearing(lat1, lon1, lat2, lon2) {
-            const φ1 = lat1 * Math.PI / 180;
-            const φ2 = lat2 * Math.PI / 180;
-            const λ1 = lon1 * Math.PI / 180;
-            const λ2 = lon2 * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            lat1 = lat1 * Math.PI / 180;
+            lat2 = lat2 * Math.PI / 180;
+            const y = Math.sin(dLon) * Math.cos(lat2);
+            const x = Math.cos(lat1) * Math.sin(lat2) -
+                Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+            return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+        }
 
-            const y = Math.sin(λ2 - λ1) * Math.cos(φ2);
-            const x = Math.cos(φ1) * Math.sin(φ2) - 
-                      Math.sin(φ1) * Math.cos(φ2) * Math.cos(λ2 - λ1);
-            const θ = Math.atan2(y, x);
-
-            return (θ * 180 / Math.PI + 360) % 360;
+        function updateArrows(bearing, currentDistance) {
+            const angleStep = 360 / MAX_ARROWS;
+            for (let i = 0; i < arrows.length; i++) {
+                const arrow = arrows[i];
+                const arrowAngle = bearing + i * angleStep;
+                arrow.setAttribute('rotation', `0 ${arrowAngle} 0`);
+                const distanceFactor = (currentDistance / targetPosition.distance);
+                arrow.setAttribute('scale', `0.5 0.5 ${Math.max(0.5, 1 - distanceFactor)}`);
+            }
         }
 
         function showError(error) {
-            let message = "An error occurred: ";
-            switch(error.code) {
-                case error.PERMISSION_DENIED:
-                    message += "Please enable location services.";
-                    break;
-                case error.POSITION_UNAVAILABLE:
-                    message += "Location information unavailable.";
-                    break;
-                case error.TIMEOUT:
-                    message += "Location request timed out.";
-                    break;
-                default:
-                    message += "Unknown error occurred.";
+            if (error.code === 1) {
+                document.getElementById('status-message').textContent =
+                    "Error: Location permission denied. Please enable location services.";
+            } else {
+                document.getElementById('status-message').textContent =
+                    "Error: Could not retrieve location.";
             }
-            document.getElementById('status-message').textContent = message;
-            console.error('Geolocation error:', error);
+            document.getElementById('retry-button').style.display = 'inline-block';
         }
     </script>
 </body>
