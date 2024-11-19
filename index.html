@@ -94,6 +94,7 @@
         const ARROW_SPACING = 2; // Space between arrows in meters
         const MAX_ARROWS = 5; // Maximum number of arrows to show at once
         let arrows = [];
+        let targetPosition = null; // Will store the fixed target coordinates
 
         // Create pool of arrows
         function createArrows() {
@@ -107,13 +108,55 @@
             }
         }
 
+        // Function to set initial target position
+        function setInitialTargetPosition(latitude, longitude) {
+            // Generate a random angle
+            const randomAngle = Math.random() * 2 * Math.PI;
+            // Fixed distance of 10 meters
+            const distance = 10;
+            
+            // Calculate target position using the Haversine formula
+            const R = 6371000; // Earth's radius in meters
+            const lat1 = latitude * Math.PI / 180;
+            
+            // Calculate target latitude and longitude
+            const targetLat = Math.asin(
+                Math.sin(lat1) * Math.cos(distance/R) +
+                Math.cos(lat1) * Math.sin(distance/R) * Math.cos(randomAngle)
+            );
+            
+            const targetLng = longitude * Math.PI/180 + 
+                Math.atan2(
+                    Math.sin(randomAngle) * Math.sin(distance/R) * Math.cos(lat1),
+                    Math.cos(distance/R) - Math.sin(lat1) * Math.sin(targetLat)
+                );
+            
+            return {
+                latitude: targetLat * 180/Math.PI,
+                longitude: targetLng * 180/Math.PI
+            };
+        }
+
         function startGame() {
             document.getElementById('start-button').style.display = 'none';
-            document.getElementById('status-message').textContent = "Following navigation path...";
-            createArrows();
+            document.getElementById('status-message').textContent = "Setting up target location...";
 
             if (navigator.geolocation) {
-                navigator.geolocation.watchPosition(showPosition, showError);
+                // Get initial position to set target
+                navigator.geolocation.getCurrentPosition(position => {
+                    targetPosition = setInitialTargetPosition(
+                        position.coords.latitude,
+                        position.coords.longitude
+                    );
+                    
+                    createArrows();
+                    
+                    // Start watching position for navigation
+                    navigator.geolocation.watchPosition(showPosition, showError);
+                    
+                    document.getElementById('status-message').textContent = 
+                        "Target placed! Follow the arrows to find it.";
+                }, showError);
             } else {
                 alert("Geolocation is not supported by this browser.");
             }
@@ -136,17 +179,31 @@
         }
 
         function showPosition(position) {
+            if (!targetPosition) return; // Wait until target is set
+
             const playerLat = position.coords.latitude;
             const playerLng = position.coords.longitude;
             
-            const fixedTargetLat = 40.008;
-            const fixedTargetLng = -105.264;
-
-            const currentDistance = calculateDistance(playerLat, playerLng, fixedTargetLat, fixedTargetLng);
-            const bearing = calculateBearing(playerLat, playerLng, fixedTargetLat, fixedTargetLng);
+            const currentDistance = calculateDistance(
+                playerLat, playerLng,
+                targetPosition.latitude,
+                targetPosition.longitude
+            );
+            
+            const bearing = calculateBearing(
+                playerLat, playerLng,
+                targetPosition.latitude,
+                targetPosition.longitude
+            );
 
             // Update the navigation arrows
             updateArrows(bearing, currentDistance);
+
+            // Update the target model position based on bearing and distance
+            const modelEntity = document.getElementById('target-model-entity');
+            const x = Math.sin(bearing * Math.PI / 180) * currentDistance;
+            const z = -Math.cos(bearing * Math.PI / 180) * currentDistance;
+            modelEntity.setAttribute('position', `${x} 0 ${z}`);
 
             // Update status message
             document.getElementById('status-message').textContent = 
