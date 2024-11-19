@@ -96,11 +96,11 @@
                 <a-asset-item id="target-model" src="AnimatedRalphie.glb"></a-asset-item>
             </a-assets>
 
-            <!-- Target model entity -->
+            <!-- Fixed Target model entity -->
             <a-entity 
                 id="target-model-entity"
                 gltf-model="#target-model"
-                position="0 0 0"
+                position="0 0 -5"  <!-- Keep target at a fixed position -->
                 scale="1 1 1"
                 rotation="0 0 0"
                 animation="property: rotation; to: 0 360 0; dur: 5000; easing: linear; loop: true">
@@ -135,14 +135,11 @@
             const playerLng = position.coords.longitude;
             const distance = 10; // Target is 10 meters away
 
-            const modelCoords = getCircleCoords(playerLat, playerLng, distance);
+            const fixedTargetLat = 40.008; // Set the fixed latitude of your target (example: 40.008)
+            const fixedTargetLng = -105.264; // Set the fixed longitude of your target (example: -105.264)
 
-            // Update the model's position
-            const modelEntity = document.getElementById('target-model-entity');
-            modelEntity.setAttribute('position', `${modelCoords.x} 0 ${modelCoords.z}`);
-
-            const currentDistance = calculateDistance(playerLat, playerLng, modelCoords.lat, modelCoords.lng);
-            const bearing = calculateBearing(playerLat, playerLng, modelCoords.lat, modelCoords.lng);
+            const currentDistance = calculateDistance(playerLat, playerLng, fixedTargetLat, fixedTargetLng);
+            const bearing = calculateBearing(playerLat, playerLng, fixedTargetLat, fixedTargetLng);
 
             // Update status message with distance and bearing
             document.getElementById('status-message').textContent = `Target is ${Math.floor(currentDistance)} meters away, direction: ${Math.floor(bearing)}°`;
@@ -172,29 +169,6 @@
                     alert("An unknown error occurred.");
                     break;
             }
-        }
-
-        function getCircleCoords(lat, lng, distance) {
-            const earthRadius = 6371e3; // Radius of the Earth in meters
-            const bearing = Math.random() * 2 * Math.PI; // Random direction
-            const angularDistance = distance / earthRadius;
-
-            const latRad = lat * Math.PI / 180;
-            const lngRad = lng * Math.PI / 180;
-
-            const targetLatRad = Math.asin(Math.sin(latRad) * Math.cos(angularDistance) + 
-                Math.cos(latRad) * Math.sin(angularDistance) * Math.cos(bearing));
-
-            const targetLngRad = lngRad + Math.atan2(Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latRad),
-                Math.cos(angularDistance) - Math.sin(latRad) * Math.sin(targetLatRad));
-
-            const targetLat = targetLatRad * 180 / Math.PI;
-            const targetLng = targetLngRad * 180 / Math.PI;
-
-            const x = (targetLng - lng) * (earthRadius * Math.PI / 180);
-            const z = (targetLat - lat) * (earthRadius * Math.PI / 180);
-
-            return { x, z, lat: targetLat, lng: targetLng };
         }
 
         function calculateDistance(lat1, lon1, lat2, lon2) {
