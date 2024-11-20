@@ -58,23 +58,11 @@
             text-align: center;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
-        #retry-button {
-            background-color: #f44336;
-            color: white;
-            padding: 12px 24px;
-            font-size: 18px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            margin: 10px;
-            display: none;
-        }
     </style>
 </head>
 <body>
     <div id="game-ui">
         <button id="start-button" onclick="startGame()">Start Navigation</button>
-        <button id="retry-button" onclick="retryGeolocation()">Retry</button>
         <p id="status-message">Press Start to begin navigation.</p>
     </div>
 
@@ -86,11 +74,11 @@
         </a-assets>
 
         <a-entity id="target-model-entity" gltf-model="#target-model" scale="1 1 1" rotation="0 0 0"
-                  gps-entity-place="latitude: 0; longitude: 0;">
+                  gps-entity-place="latitude: 40.032730; longitude: -105.258652;">
         </a-entity>
 
-        <a-entity id="arrow-template" visible="false">
-            <a-triangle vertex-a="0 0.5 -1" vertex-b="-0.5 0.5 0" vertex-c="0.5 0.5 0"
+        <a-entity id="direction-arrow" position="0 0 -2" visible="true">
+            <a-triangle vertex-a="0 1 0" vertex-b="-0.5 -0.5 0" vertex-c="0.5 -0.5 0"
                         material="color: #FFD700; transparent: true; opacity: 0.8"></a-triangle>
         </a-entity>
 
@@ -99,141 +87,43 @@
 
     <script>
         let gameStarted = false;
-        let congratsShown = false;
-        const ARROW_SPACING = 2;
-        const MAX_ARROWS = 5;
-        let arrows = [];
-        let targetPosition = null;
-        let startTime = null;
-        let lastUpdateTime = 0;
-        const UPDATE_INTERVAL = 1000;
         const LOCATION_OPTIONS = {
             enableHighAccuracy: true,
             timeout: 20000,
             maximumAge: 0
         };
-        let locationWatchId = null;
+        const targetCoordinates = { latitude: 40.032730, longitude: -105.258652 };
 
-        async function checkLocationPermission() {
-            try {
-                const result = await navigator.permissions.query({ name: 'geolocation' });
-                return result.state;
-            } catch (error) {
-                return new Promise((resolve) => {
-                    navigator.geolocation.getCurrentPosition(
-                        () => resolve('granted'),
-                        () => resolve('denied'),
-                        { timeout: 5000 }
-                    );
-                });
-            }
-        }
-
-        function retryGeolocation() {
-            document.getElementById('retry-button').style.display = 'none';
-            document.getElementById('status-message').textContent = "Retrying location setup...";
-            startGame();
-        }
-
-        async function startGame() {
+        function startGame() {
             if (gameStarted) return;
 
             document.getElementById('start-button').style.display = 'none';
-            document.getElementById('status-message').textContent = "Checking location permissions...";
-
-            const permissionStatus = await checkLocationPermission();
-
-            if (permissionStatus === 'denied') {
-                showError({ code: 1, message: 'Location permission denied' });
-                return;
-            }
+            document.getElementById('status-message').textContent = "Acquiring location...";
 
             gameStarted = true;
-            startTime = Date.now();
-            document.getElementById('status-message').textContent = "Setting up target location...";
 
-            if (locationWatchId) {
-                navigator.geolocation.clearWatch(locationWatchId);
-            }
-
-            try {
-                const position = await new Promise((resolve, reject) => {
-                    navigator.geolocation.getCurrentPosition(resolve, reject, LOCATION_OPTIONS);
-                });
-
-                targetPosition = setRandomTargetPosition(position.coords.latitude, position.coords.longitude);
-
-                const targetModel = document.getElementById('target-model-entity');
-                targetModel.setAttribute('gps-entity-place', {
-                    latitude: targetPosition.latitude,
-                    longitude: targetPosition.longitude
-                });
-
-                createArrows();
-
-                locationWatchId = navigator.geolocation.watchPosition(updateGameState, showError, LOCATION_OPTIONS);
-
-                document.getElementById('status-message').textContent =
-                    `Target placed ${Math.round(targetPosition.distance)}m away at ${Math.round(targetPosition.angle)}°! Follow the arrows to find it.`;
-
-            } catch (error) {
-                showError(error);
-                gameStarted = false;
-            }
+            navigator.geolocation.watchPosition(position => {
+                const userLat = position.coords.latitude;
+                const userLon = position.coords.longitude;
+                updateGame(userLat, userLon);
+            }, error => {
+                document.getElementById('status-message').textContent = "Error acquiring location.";
+                console.error(error);
+            }, LOCATION_OPTIONS);
         }
 
-        function setRandomTargetPosition(latitude, longitude) {
-            const randomAngle = Math.random() * 2 * Math.PI;
-            const distance = 5 + (Math.random() * 5);
-            const earthRadius = 6371000;
-            const angularDistance = distance / earthRadius;
-
-            const lat1 = latitude * (Math.PI / 180);
-            const lon1 = longitude * (Math.PI / 180);
-
-            const lat2 = Math.asin(Math.sin(lat1) * Math.cos(angularDistance) + Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(randomAngle));
-            const lon2 = lon1 + Math.atan2(Math.sin(randomAngle) * Math.sin(angularDistance) * Math.cos(lat1), Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2));
-
-            return {
-                latitude: lat2 * (180 / Math.PI),
-                longitude: lon2 * (180 / Math.PI),
-                distance: distance,
-                angle: randomAngle * (180 / Math.PI)
-            };
-        }
-
-        function createArrows() {
-            const arrowTemplate = document.querySelector('#arrow-template');
-            for (let i = 0; i < MAX_ARROWS; i++) {
-                const arrow = arrowTemplate.cloneNode(true);
-                arrow.id = `arrow-${i}`;
-                arrow.setAttribute('visible', 'true');
-                document.querySelector('a-scene').appendChild(arrow);
-                arrows.push(arrow);
-            }
-        }
-
-        function updateGameState(position) {
-            if (!targetPosition || !gameStarted) return;
-
-            const currentTime = Date.now();
-            if (currentTime - lastUpdateTime < UPDATE_INTERVAL) return;
-            lastUpdateTime = currentTime;
-
-            const currentDistance = calculateDistance(position.coords.latitude, position.coords.longitude, targetPosition.latitude, targetPosition.longitude);
-            const bearing = calculateBearing(position.coords.latitude, position.coords.longitude, targetPosition.latitude, targetPosition.longitude);
+        function updateGame(userLat, userLon) {
+            const distance = calculateDistance(userLat, userLon, targetCoordinates.latitude, targetCoordinates.longitude);
+            const bearing = calculateBearing(userLat, userLon, targetCoordinates.latitude, targetCoordinates.longitude);
 
             document.getElementById('status-message').textContent =
-                `Distance: ${currentDistance.toFixed(1)}m | Direction: ${Math.round(bearing)}° | Initial Distance: ${targetPosition.distance.toFixed(1)}m`;
+                `Distance to target: ${distance.toFixed(1)}m | Bearing: ${Math.round(bearing)}°`;
 
-            updateArrows(bearing, currentDistance);
+            const arrow = document.getElementById('direction-arrow');
+            arrow.setAttribute('rotation', `0 ${bearing} 0`);
 
-            if (currentDistance < 2 && !congratsShown) {
-                const timeElapsed = Math.floor((Date.now() - startTime) / 1000);
+            if (distance < 2) {
                 document.getElementById('acknowledgment').style.display = 'block';
-                document.getElementById('acknowledgment').innerHTML =
-                    `Congratulations! You've found the target!<br>Time: ${Math.floor(timeElapsed / 60)}m ${timeElapsed % 60}s.`;
-                congratsShown = true;
             }
         }
 
@@ -256,28 +146,6 @@
             const x = Math.cos(lat1) * Math.sin(lat2) -
                 Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
             return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
-        }
-
-        function updateArrows(bearing, currentDistance) {
-            const angleStep = 360 / MAX_ARROWS;
-            for (let i = 0; i < arrows.length; i++) {
-                const arrow = arrows[i];
-                const arrowAngle = bearing + i * angleStep;
-                arrow.setAttribute('rotation', `0 ${arrowAngle} 0`);
-                const distanceFactor = (currentDistance / targetPosition.distance);
-                arrow.setAttribute('scale', `0.5 0.5 ${Math.max(0.5, 1 - distanceFactor)}`);
-            }
-        }
-
-        function showError(error) {
-            if (error.code === 1) {
-                document.getElementById('status-message').textContent =
-                    "Error: Location permission denied. Please enable location services.";
-            } else {
-                document.getElementById('status-message').textContent =
-                    "Error: Could not retrieve location.";
-            }
-            document.getElementById('retry-button').style.display = 'inline-block';
         }
     </script>
 </body>
